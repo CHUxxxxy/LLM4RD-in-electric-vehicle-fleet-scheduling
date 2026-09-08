@@ -1,8 +1,6 @@
 # LLM4RD
 
-LLM-driven Reward Design for multi-agent EV ride-hailing scheduling (MAPPO).
-
-The LLM proposes `compute_reward` functions. Each candidate is trained with MAPPO, scored by three-party utility (platform, PV-storage station, grid), then refined from Spearman correlation and linear-regression feedback.
+LLM4RD automates reward function design for multi-agent electric vehicle (EV) ride-hailing fleet scheduling. A large language model proposes compute_reward candidates, each is trained with MAPPO and evaluated on three-party utility (platform, PV-storage station, grid). Spearman correlation and linear-regression feedback drive iterative refinement until a high-quality reward emerges.
 
 ## Requirements
 
@@ -29,7 +27,7 @@ Edit `.env`. Do not commit `.env`.
 ```
 LLM4RD_API_BASE=https://api.openai.com/v1
 LLM4RD_API_KEY=sk-...
-LLM4RD_MODEL=gpt-4o-mini
+LLM4RD_MODEL=gpt\glm\claude
 ```
 
 Other compatible setups:
