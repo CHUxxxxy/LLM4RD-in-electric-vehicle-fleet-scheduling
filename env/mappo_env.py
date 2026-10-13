@@ -14,7 +14,7 @@ import os
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# 仿真、电价和 MAPPO 参数统一从 config 读取，与论文保持一致
+
 from LLM4RD import config as cfg
 
 TRAVEL_SPEED = cfg.TRAVEL_SPEED
@@ -86,7 +86,7 @@ class RLEnv:
         self.state_dim = 1 + 1 + 6 + 2 + (3 * self.max_orders_in_state_action) + (3 * self.n_closest_stations_in_state)
         self._initialize_stations(); self.current_cycle = 0; self.active_orders_pool = []
         self.vehicles = []
-        # 可选外部奖励：compute_reward(vehicle, env_metrics, current_cycle, max_cycles)
+     
         self.external_reward_fn = external_reward_fn
         self.total_grid_power_loss_reduction_benefit = 0
         self.total_grid_peak_shaving_benefit = 0
@@ -100,7 +100,7 @@ class RLEnv:
     def _load_initial_order_data(self):
         try:
             df = pd.read_excel(self.excel_path)
-            # 选取 0-24 点的订单，对应论文中 24 小时、288 步的运行日
+            # 选取 0-24 点的订单
             df_12h = df[(df['SHour'] >= 0) & (df['SHour'] < cfg.HORIZON_HOURS)].copy()
             if df_12h.empty:
                 print("Warning: No orders found for SHour 0-23 in the Excel file.")
@@ -175,7 +175,7 @@ class RLEnv:
         self.orders_by_cycle = {i: [] for i in range(self.max_cycles)}; self.all_orders_master_list = []
         try:
             df = pd.read_excel(self.excel_path)
-            # 选取 0-24 点的订单，对应论文中 24 小时、288 步的运行日
+            # 选取 0-24 点的订单
             df_12h = df[(df['SHour'] >= 0) & (df['SHour'] < cfg.HORIZON_HOURS)].copy()
             if not df_12h.empty:
                 cycles_per_hour = cfg.CYCLES_PER_HOUR  # 每小时12个周期
