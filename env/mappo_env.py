@@ -14,50 +14,43 @@ import os
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# --- 环境参数 ---
-TRAVEL_SPEED = 50 / 12
-MAX_CYCLES = 144  # 12 小时 × 12 周期/小时
-N_VEHICLES = 1000
-N_STATIONS = 1000
-BATTERY_THRESHOLD_FOR_ORDER = 20
-BATTERY_CHARGE_PER_CYCLE = 10
-BATTERY_DRAIN_MOVING = 2
-BATTERY_TARGET_CHARGE_LEVEL = 80
-MAX_VEHICLES_PER_STATION = 10
-MIN_CHARGE_CYCLES = 2
+# 仿真、电价和 MAPPO 参数统一从 config 读取，与论文保持一致
+from LLM4RD import config as cfg
 
-# --- 奖励系数 ---
-GUROBI_CHARGE_COEFF = 0.15
-NEW_ORDER_ASSIGNMENT_LENGTH_MULTIPLIER = 2.5
-GUROBI_DISTANCE_PENALTY_COEFF = 0.12
-ORDER_COMPLETION_REWARD_COEFF = 25.0
-SOLAR_STATION_RATIO = 0.2
-CURRENT_ELECTRICITY_PRICE_PER_KWH = 0.4
-SOLAR_ELECTRICITY_PRICE_DISCOUNT = 0.8
-C_LOSS = 1.31
-PEAK_TO_BASE_COST_DIFFERENCE = 2.6
-SOLAR_POWER_GENERATION_MAX_PER_HOUR = 200
-SOLAR_FARM_SUBSIDY = 0.25
-STORAGE_COST_PER_KWH = 0.05
-STORAGE_COST_CALC_INTERVAL = 4
-
-# --- PPO 算法参数 ---
-MAX_TRAINING_STEPS = 1e7
-LR = 3e-4
-PPO_STEPS = 128
-PPO_EPOCHS = 10
-MINI_BATCH_SIZE = 2048
-CLIP_PARAM = 0.2
-GAMMA = 0.99
-GAE_LAMBDA = 0.95
-VF_COEFF = 0.5
-ENT_COEFF = 0.01
-MAX_GRAD_NORM = 0.5
-HIDDEN_DIM = 256
-
-# --- 评估间隔（独立 MAPPO 训练时可选用）---
+TRAVEL_SPEED = cfg.TRAVEL_SPEED
+MAX_CYCLES = cfg.MAX_CYCLES
+N_VEHICLES = cfg.N_VEHICLES
+N_STATIONS = cfg.N_STATIONS
+BATTERY_THRESHOLD_FOR_ORDER = cfg.BATTERY_THRESHOLD_FOR_ORDER
+BATTERY_CHARGE_PER_CYCLE = cfg.BATTERY_CHARGE_PER_CYCLE
+BATTERY_DRAIN_MOVING = cfg.BATTERY_DRAIN_MOVING
+BATTERY_TARGET_CHARGE_LEVEL = cfg.BATTERY_TARGET_CHARGE_LEVEL
+MAX_VEHICLES_PER_STATION = cfg.MAX_VEHICLES_PER_STATION
+MIN_CHARGE_CYCLES = cfg.MIN_CHARGE_CYCLES
+GUROBI_CHARGE_COEFF = cfg.GUROBI_CHARGE_COEFF
+NEW_ORDER_ASSIGNMENT_LENGTH_MULTIPLIER = cfg.NEW_ORDER_ASSIGNMENT_LENGTH_MULTIPLIER
+GUROBI_DISTANCE_PENALTY_COEFF = cfg.GUROBI_DISTANCE_PENALTY_COEFF
+ORDER_COMPLETION_REWARD_COEFF = cfg.ORDER_COMPLETION_REWARD_COEFF
+SOLAR_ELECTRICITY_PRICE_DISCOUNT = cfg.SOLAR_ELECTRICITY_PRICE_DISCOUNT
+C_LOSS = cfg.C_LOSS
+PEAK_TO_BASE_COST_DIFFERENCE = cfg.PEAK_TO_BASE_COST_DIFFERENCE
+SOLAR_FARM_SUBSIDY = cfg.SOLAR_FARM_SUBSIDY
+STORAGE_COST_PER_KWH = cfg.STORAGE_COST_PER_KWH
+STORAGE_COST_CALC_INTERVAL = cfg.STORAGE_COST_CALC_INTERVAL
+CLIP_PARAM = cfg.CLIP_PARAM
+GAMMA = cfg.GAMMA
+GAE_LAMBDA = cfg.GAE_LAMBDA
+VF_COEFF = cfg.VF_COEFF
+ENT_COEFF = cfg.ENT_COEFF
+MAX_GRAD_NORM = cfg.MAX_GRAD_NORM
+HIDDEN_DIM = cfg.HIDDEN_DIM
+LR = cfg.LR
+PPO_STEPS = cfg.PPO_STEPS
+PPO_EPOCHS = cfg.PPO_EPOCHS
+MINI_BATCH_SIZE = cfg.MINI_BATCH_SIZE
+MAX_TRAINING_STEPS = cfg.MAPPO_TRAINING_STEPS
 EVAL_INTERVAL_STEPS = 50000
-NUM_EVAL_EPISODES = 10
+NUM_EVAL_EPISODES = cfg.EVALUATION_EPISODES
 
 # --- Helper Functions ---
 def haversine(c1, c2):
@@ -107,15 +100,15 @@ class RLEnv:
     def _load_initial_order_data(self):
         try:
             df = pd.read_excel(self.excel_path)
-            # 选取0-12点（SHour 0到11）的订单，模拟12小时运营
-            df_12h = df[(df['SHour'] >= 0) & (df['SHour'] < 12)].copy()
+            # 选取 0-24 点的订单，对应论文中 24 小时、288 步的运行日
+            df_12h = df[(df['SHour'] >= 0) & (df['SHour'] < cfg.HORIZON_HOURS)].copy()
             if df_12h.empty:
-                print("Warning: No orders found for SHour 0-11 in the Excel file.")
+                print("Warning: No orders found for SHour 0-23 in the Excel file.")
                 self.min_lat, self.max_lat, self.min_lon, self.max_lon = 30.6, 30.8, 104.0, 104.1
                 self.max_dist_norm = 50.0
                 return
-            cycles_per_hour = 12
-            cycle_duration_seconds = 3600 / cycles_per_hour  # 每周期5分钟=300秒
+            cycles_per_hour = cfg.CYCLES_PER_HOUR
+            cycle_duration_seconds = cfg.CYCLE_MINUTES * 60  # 每周期5分钟=300秒
             df_12h['length_km'] = df_12h['TD'] / 1000.0
             temp_orders_by_cycle = {i: [] for i in range(self.max_cycles)}
             temp_all_orders = []
@@ -148,7 +141,7 @@ class RLEnv:
 
     def _initialize_stations(self):
         self.stations = []
-        num_solar_stations = int(self.n_stations * SOLAR_STATION_RATIO)
+        num_solar_stations = min(cfg.N_PSC_STATIONS, self.n_stations)
         solar_station_indices = random.sample(range(self.n_stations), num_solar_stations)
 
         if abs(self.max_lat - self.min_lat) < 1e-6 or abs(self.max_lon - self.min_lon) < 1e-6:
@@ -182,11 +175,11 @@ class RLEnv:
         self.orders_by_cycle = {i: [] for i in range(self.max_cycles)}; self.all_orders_master_list = []
         try:
             df = pd.read_excel(self.excel_path)
-            # 选取0-12点（SHour 0到11）的订单，模拟12小时运营
-            df_12h = df[(df['SHour'] >= 0) & (df['SHour'] < 12)].copy()
+            # 选取 0-24 点的订单，对应论文中 24 小时、288 步的运行日
+            df_12h = df[(df['SHour'] >= 0) & (df['SHour'] < cfg.HORIZON_HOURS)].copy()
             if not df_12h.empty:
-                cycles_per_hour = 12  # 每小时12个周期
-                cycle_duration_seconds = 3600 / cycles_per_hour  # 每周期5分钟=300秒
+                cycles_per_hour = cfg.CYCLES_PER_HOUR  # 每小时12个周期
+                cycle_duration_seconds = cfg.CYCLE_MINUTES * 60  # 每周期5分钟=300秒
                 df_12h['length_km'] = df_12h['TD'] / 1000.0; current_order_id_counter = 0
                 for _, r in df_12h.iterrows():
                     # 计算订单所属周期：小时数*12 + 小时内的周期
@@ -215,8 +208,8 @@ class RLEnv:
 
     def get_environment_metrics(self):
         return {
-            'is_peak_hour': True,
-            'electricity_price': CURRENT_ELECTRICITY_PRICE_PER_KWH,
+            'is_peak_hour': cfg.is_peak_hour(self.current_cycle),
+            'electricity_price': cfg.electricity_price(self.current_cycle),
             'solar_discount': SOLAR_ELECTRICITY_PRICE_DISCOUNT,
             'avg_battery': np.mean([v.get('battery', 0) for v in self.vehicles]) if self.vehicles else 0.0
         }
@@ -294,7 +287,8 @@ class RLEnv:
         current_rewards = np.zeros(self.n_vehicles, dtype=np.float32)
         travel_this_cycle = self.travel_speed
 
-        is_peak_hour = True # 始终为 True
+        is_peak_hour = cfg.is_peak_hour(self.current_cycle)
+        grid_price = cfg.electricity_price(self.current_cycle)
         
         # 定义本周期内的累加器，这些累加器应在每个step的开始重置
         cycle_grid_power_loss_reduction_benefit_local = 0
@@ -302,14 +296,14 @@ class RLEnv:
         cycle_solar_station_profit_local_from_generation = 0 # 仅用于累加发电补贴
         total_charging_kwh_this_cycle_peak_hour_local = 0 # 用于计算削峰填谷
 
-        # 光伏发电量生成与储能更新 (在处理车辆行动之前，确保储能是最新的)
-        seconds_per_cycle = 3600 / MAX_CYCLES
-        hours_per_cycle = seconds_per_cycle / 3600 
-        
+        # 光伏发电量生成与储能更新。单站装机 44 kW，储能上限 135 kWh
         for station in self.stations:
             if station['is_solar']:
-                station['solar_power_output'] = random.uniform(0, SOLAR_POWER_GENERATION_MAX_PER_HOUR) * hours_per_cycle 
-                station['stored_energy'] += station['solar_power_output']
+                station['solar_power_output'] = cfg.psc_pv_energy_kwh(self.current_cycle)
+                station['stored_energy'] = min(
+                    cfg.STORAGE_CAPACITY_KWH,
+                    station['stored_energy'] + station['solar_power_output'],
+                )
                 # 光伏场站补贴：在发电时就计入利润（这部分是全局且独立于售电的）
                 cycle_solar_station_profit_local_from_generation += SOLAR_FARM_SUBSIDY * station['solar_power_output']
 
@@ -373,12 +367,12 @@ class RLEnv:
                         dist_to_station = haversine(vehicle_at_decision['position'], station_to_charge_at['position'])
                         
                         # --- 预计充电电量使用固定单周期充电量 ---
-                        potential_charge_amount_kwh = self.battery_charge_per_cycle / 100.0 * 50 # 单周期固定充电量对应的kWh
+                        potential_charge_amount_kwh = self.battery_charge_per_cycle / 100.0 * cfg.BATTERY_CAPACITY_KWH
                         potential_charge_amount_kwh = max(0, potential_charge_amount_kwh) # 确保不为负
                         # --- 修改结束 ---
 
                         # 光伏站使用折扣电价，无单独补贴项
-                        electricity_price = CURRENT_ELECTRICITY_PRICE_PER_KWH
+                        electricity_price = grid_price
                         if station_to_charge_at['is_solar']:
                             electricity_price *= SOLAR_ELECTRICITY_PRICE_DISCOUNT
                         charging_cost = electricity_price * potential_charge_amount_kwh
@@ -455,7 +449,7 @@ class RLEnv:
             elif vehicle['status'] == 'charging':
                 is_moving = False;
                 charge_amount = self.battery_charge_per_cycle
-                actual_charge_kwh = charge_amount / 100.0 * 50 # 假设电池容量 50 kWh
+                actual_charge_kwh = charge_amount / 100.0 * cfg.BATTERY_CAPACITY_KWH
                 # 标记充电开始与充电量，供外部 reward 使用
                 try:
                     vehicle['events']['started_charging'] = True
@@ -469,7 +463,7 @@ class RLEnv:
                     vehicle['charging_cycles_remaining'] -= 1
                 
                 # For Peak Shaving Benefit: Any charging at a station contributes if it's peak hour
-                if is_peak_hour: # 现在 is_peak_hour 始终为 True
+                if is_peak_hour:
                     # 削峰填谷效益直接加到当前车辆的奖励中，使其即时感知
                     current_rewards[i] += PEAK_TO_BASE_COST_DIFFERENCE * actual_charge_kwh
                     total_charging_kwh_this_cycle_peak_hour_local += actual_charge_kwh # 累加到本周期的局部变量 (用于全局统计)
@@ -477,7 +471,7 @@ class RLEnv:
                 # --- 光伏站充电优先级和收益计算 ---
                 total_power_from_solar_kwh = 0 # 追踪所有来自光伏的电量 (储能 + 直冲)
                 
-                electricity_price_for_solar_station = CURRENT_ELECTRICITY_PRICE_PER_KWH * SOLAR_ELECTRICITY_PRICE_DISCOUNT
+                electricity_price_for_solar_station = grid_price * SOLAR_ELECTRICITY_PRICE_DISCOUNT
                 if station['is_solar']:
                     charged_from_storage = 0
                     charged_from_direct_solar = 0
