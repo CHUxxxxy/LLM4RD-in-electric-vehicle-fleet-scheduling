@@ -1,6 +1,8 @@
 # LLM4RD
 
-LLM4RD automates reward function design for multi-agent electric vehicle (EV) ride-hailing fleet scheduling. A large language model proposes compute_reward candidates, each is trained with MAPPO and evaluated on three-party utility (platform, PV-storage station, grid). Spearman correlation and linear-regression feedback drive iterative refinement until a high-quality reward emerges.
+LLM-driven Reward Design for multi-agent EV ride-hailing scheduling (MAPPO).
+
+The LLM proposes `compute_reward` functions. Each candidate is trained with MAPPO, scored by three-party utility (platform, PV-storage station, grid), then refined from Spearman correlation and linear-regression feedback.
 
 ## Requirements
 
@@ -27,7 +29,7 @@ Edit `.env`. Do not commit `.env`.
 ```
 LLM4RD_API_BASE=https://api.openai.com/v1
 LLM4RD_API_KEY=sk-...
-LLM4RD_MODEL=gpt\glm\claude
+LLM4RD_MODEL=claude-sonnet-4-6
 ```
 
 Other compatible setups:
@@ -44,7 +46,7 @@ Provide an Excel file with these columns:
 
 | Column | Meaning |
 |---|---|
-| `SHour` | Start hour (0–23). Hours 0–11 are used (12-hour horizon) |
+| `SHour` | Start hour (0–23). All 24 hours are used (288 steps of 5 minutes) |
 | `STime` | Start time in seconds |
 | `SLat`, `SLon` | Pickup latitude / longitude |
 | `ELat`, `ELon` | Drop-off latitude / longitude |
@@ -64,7 +66,7 @@ python LLM4RD/main.py --excel path/to/orders.xlsx --quick
 python LLM4RD/main.py --excel path/to/orders.xlsx
 
 # override API settings without editing .env
-python LLM4RD/main.py --excel path/to/orders.xlsx --api-base https://api.openai.com/v1 --model gpt-4o-mini
+python LLM4RD/main.py --excel path/to/orders.xlsx --api-base https://api.openai.com/v1 --model claude-sonnet-4-6
 ```
 
 Do not pass `--api-key` in shared logs or screenshots. Prefer `.env`.
@@ -96,7 +98,7 @@ See `.env.example` for the full list. Common knobs:
 
 - `LLM4RD_ITERATIONS` / `LLM4RD_CANDIDATES` — search budget
 - `LLM4RD_TRAINING_STEPS` — MAPPO steps per candidate
-- `LLM4RD_N_VEHICLES` / `LLM4RD_N_STATIONS` — simulation scale
+- `LLM4RD_N_VEHICLES` / `LLM4RD_N_STATIONS` / `LLM4RD_N_PSC_STATIONS` — simulation scale (defaults 1200 / 220 / 12)
 - `LLM4RD_QUICK=1` — same as `--quick`
 
 ## License
