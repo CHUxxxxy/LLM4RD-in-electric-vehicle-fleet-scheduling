@@ -82,11 +82,12 @@ class RLEnv:
         self.max_orders_in_state_action = 20
         self.n_closest_stations_in_state = 10
         self._load_initial_order_data()
-        self.action_dim = 1 + self.max_orders_in_state_action + self.n_stations
+        # 空闲 + 订单 N + 最近充电站 M
+        self.action_dim = 1 + self.max_orders_in_state_action + self.n_closest_stations_in_state
         self.state_dim = 1 + 1 + 6 + 2 + (3 * self.max_orders_in_state_action) + (3 * self.n_closest_stations_in_state)
         self._initialize_stations(); self.current_cycle = 0; self.active_orders_pool = []
         self.vehicles = []
-     
+        # 可选外部奖励：compute_reward(vehicle, env_metrics, current_cycle, max_cycles)
         self.external_reward_fn = external_reward_fn
         self.total_grid_power_loss_reduction_benefit = 0
         self.total_grid_peak_shaving_benefit = 0
@@ -114,7 +115,7 @@ class RLEnv:
             temp_all_orders = []
             current_order_id_counter = 0
             for _, r in df_12h.iterrows():
-                # 计算订单所属周期：小时数*12 + 小时内的周期
+                # 计算订单所属周期
                 hour = int(r['SHour'])
                 second_in_hour = r['STime'] % 3600
                 cycle_in_hour = int(second_in_hour // cycle_duration_seconds)
@@ -182,7 +183,7 @@ class RLEnv:
                 cycle_duration_seconds = cfg.CYCLE_MINUTES * 60  # 每周期5分钟=300秒
                 df_12h['length_km'] = df_12h['TD'] / 1000.0; current_order_id_counter = 0
                 for _, r in df_12h.iterrows():
-                    # 计算订单所属周期：小时数*12 + 小时内的周期
+                    # 计算订单所属周期
                     hour = int(r['SHour'])
                     second_in_hour = r['STime'] % 3600
                     cycle_in_hour = int(second_in_hour // cycle_duration_seconds)
@@ -214,6 +215,15 @@ class RLEnv:
             'avg_battery': np.mean([v.get('battery', 0) for v in self.vehicles]) if self.vehicles else 0.0
         }
 
+    def _nearest_stations(self, vehicle):
+        """按到车辆当前位置的距离升序排列充电站，观测和充电动作共用这一顺序。"""
+        stations_with_dist = []
+        for station in self.stations:
+            dist_to_station = haversine(vehicle['position'], station['position'])
+            stations_with_dist.append({'station_obj': station, 'dist': dist_to_station})
+        stations_with_dist.sort(key=lambda x: x['dist'])
+        return stations_with_dist
+
     def _get_state_for_vehicle(self, vehicle_idx):
         vehicle = self.vehicles[vehicle_idx]
         battery_level = vehicle['battery'] / 100.0
@@ -242,11 +252,7 @@ class RLEnv:
                 normalized_profit = np.clip(potential_profit / 80.0, -1.0, 1.0)
                 order_features.extend([dist_norm, length_norm, normalized_profit])
             else: order_features.extend([1.0, 0.0, -1.0])
-        stations_with_dist = []
-        for station in self.stations:
-            dist_to_station = haversine(vehicle['position'], station['position'])
-            stations_with_dist.append({'station_obj': station, 'dist': dist_to_station})
-        stations_with_dist.sort(key=lambda x: x['dist'])
+        stations_with_dist = self._nearest_stations(vehicle)
         station_features = []
         for i in range(self.n_closest_stations_in_state):
             if i < len(stations_with_dist):
@@ -361,16 +367,17 @@ class RLEnv:
                 else: current_rewards[i] -= 50.0
             elif self.max_orders_in_state_action < action_idx < self.action_dim:
                 station_choice_idx = action_idx - (self.max_orders_in_state_action + 1)
-                if 0 <= station_choice_idx < self.n_stations:
-                    station_to_charge_at = self.stations[station_choice_idx]
+                nearest_stations = self._nearest_stations(vehicle_at_decision)
+                if 0 <= station_choice_idx < self.n_closest_stations_in_state and station_choice_idx < len(nearest_stations):
+                    station_info = nearest_stations[station_choice_idx]
+                    station_to_charge_at = station_info['station_obj']
                     if len(station_to_charge_at['charging_vehicle_ids']) < self.max_vehicles_per_station:
-                        dist_to_station = haversine(vehicle_at_decision['position'], station_to_charge_at['position'])
+                        dist_to_station = station_info['dist']
                         
                         # --- 预计充电电量使用固定单周期充电量 ---
                         potential_charge_amount_kwh = self.battery_charge_per_cycle / 100.0 * cfg.BATTERY_CAPACITY_KWH
                         potential_charge_amount_kwh = max(0, potential_charge_amount_kwh) # 确保不为负
-                        # --- 修改结束 ---
-
+              
                         # 光伏站使用折扣电价，无单独补贴项
                         electricity_price = grid_price
                         if station_to_charge_at['is_solar']:
@@ -529,10 +536,7 @@ class RLEnv:
             for station in self.stations:
                 if station['is_solar'] and station['stored_energy'] > 0: 
                     self.total_solar_station_profit -= STORAGE_COST_PER_KWH * station['stored_energy']
-        # --- 储能成本修改结束 ---
 
-        # current_rewards 已经包含了车辆直接带来的平台效益、降低损耗效益和削峰填谷效益
-        # 光伏站利润中的发电补贴和售电收入也已通过 cycle_solar_station_profit_local_from_generation 和 cycle_solar_station_profit_local_from_sales 累加并间接反馈
         
         self.current_cycle += 1
         if self.current_cycle < self.max_cycles:
@@ -557,7 +561,6 @@ class RLEnv:
                         sanitized_v = v.copy() if isinstance(v, dict) else {'id': idx}
                         sanitized_v.setdefault('events', {})
                         ev = sanitized_v['events']
-                        # 填充常见事件键的默认值（不覆盖已有值）
                         ev.setdefault('finished_order', False)
                         ev.setdefault('picked_up_order', False)
                         ev.setdefault('started_charging', False)
