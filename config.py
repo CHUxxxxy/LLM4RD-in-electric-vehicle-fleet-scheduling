@@ -12,7 +12,7 @@ except ImportError:
 import torch
 
 # --- LLM（OpenAI 兼容接口）---
-# 论文附录：Claude Sonnet 4.6，temperature 0.7，最大输出 4096
+# Claude Sonnet 4.6，temperature 0.7，最大输出 4096
 LLM_API_BASE = os.environ.get("LLM4RD_API_BASE", "https://api.openai.com/v1").rstrip("/")
 LLM_API_KEY = os.environ.get("LLM4RD_API_KEY", "")
 LLM_MODEL = os.environ.get("LLM4RD_MODEL", "claude-sonnet-4-6")
@@ -25,7 +25,7 @@ CANDIDATES_PER_ITERATION = int(os.environ.get("LLM4RD_CANDIDATES", "8"))
 EVALUATION_EPISODES = int(os.environ.get("LLM4RD_EVAL_EPISODES", "10"))
 RANDOM_SEED = int(os.environ.get("LLM4RD_SEED", "42"))
 
-# --- 仿真规模（与论文第 IV 节及附录一致）---
+# --- 仿真规模---
 # 每步 5 分钟，一天 24 小时，共 288 步
 CYCLE_MINUTES = 5
 CYCLES_PER_HOUR = 60 // CYCLE_MINUTES
@@ -98,7 +98,6 @@ NEW_ORDER_ASSIGNMENT_LENGTH_MULTIPLIER = 2.5
 GUROBI_DISTANCE_PENALTY_COEFF = 0.12
 ORDER_COMPLETION_REWARD_COEFF = 25.0
 SOLAR_STATION_RATIO = N_PSC_STATIONS / float(N_STATIONS)
-# 保留名称供奖励代码读取；具体电价按决策步调用 electricity_price()
 CURRENT_ELECTRICITY_PRICE_PER_KWH = TOU_OFFPEAK_PRICE
 SOLAR_ELECTRICITY_PRICE_DISCOUNT = 0.8
 C_LOSS = 1.31
@@ -138,7 +137,7 @@ for _d in (OUTPUT_DIR, FAILED_DIR):
 
 
 def require_llm_credentials():
-    """启动前检查 API 配置，避免把密钥写进代码。"""
+    """启动前检查 API 配置"""
     if not LLM_API_KEY.strip():
         raise RuntimeError(
             "未设置 LLM4RD_API_KEY。请复制 .env.example 为 .env 并填入密钥，"
